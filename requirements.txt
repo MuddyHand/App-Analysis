@@ -3,5 +3,11 @@ requests>=2.31
 python-dotenv>=1.0
 opencv-python>=4.9
 
-# Fases seguintes (tracking, etiquetagem, relatório) serão adicionadas
+# Fase 1 — tracking
+ultralytics>=8.2   # YOLO + ByteTrack (tracker embutido)
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15.0       # output em parquet
+
+# Fases seguintes (etiquetagem, relatório) serão adicionadas
 # a este ficheiro à medida que cada fase for confirmada e implementada.

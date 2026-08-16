@@ -13,7 +13,7 @@ Ferramenta complementar ao dashboard de monitorização de carga (Streamlit + Pl
 | Fase | Descrição | Estado |
 |---|---|---|
 | **Fase 0** | Validação de acesso a dados (API Veo vs. export manual mp4) | ✅ Fechada — ver `fase0_api/README.md` |
-| Fase 1 | Tracking (deteção + tracking de jogadores/bola, calibração do campo) | 🔵 Desbloqueada — ainda por implementar |
+| Fase 1 | Tracking (deteção + tracking de jogadores/bola, calibração do campo) | 🟢 Implementada (v1) — por validar com jogo real, ver `fase1_tracking/README.md` |
 | Fase 2 | Deteção de eventos candidatos (heurísticas sobre tracking) | ⏸️ Não iniciada |
 | Fase 3 | Interface de etiquetagem (Streamlit) | ⏸️ Não iniciada |
 | Fase 4 | Relatório (dashboard Streamlit + Plotly) | ⏸️ Não iniciada |
@@ -43,4 +43,7 @@ cp .env.example .env   # preencher com credenciais reais — nunca commitar .env
 
 ## Próximo passo
 
-Fase 0 fechada (decisão: export manual, sempre em modo Tactical/Panoramic da Veo — nunca Broadcast/Follow-cam, ver `fase0_api/README.md`). Fase 1 (tracking) ainda por implementar — a discutir com o treinador antes de começar (biblioteca de tracking, formato exato do output).
+Fase 1 (tracking) tem uma v1 implementada e testada estruturalmente, mas
+por validar com um jogo real (ver `fase1_tracking/README.md` — limitações
+conhecidas: deteção de bola fraca, IDs de tracking instáveis). Falta um
+vídeo mais longo para calibrar e avaliar antes de avançar para a Fase 2.

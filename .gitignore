@@ -13,10 +13,18 @@ service_account.json
 # Dados e vídeo (pesados / sensíveis — não versionar)
 fase0_api/output/*
 !fase0_api/output/.gitkeep
+fase1_tracking/calibration/*
+!fase1_tracking/calibration/.gitkeep
+fase1_tracking/output/*
+!fase1_tracking/output/.gitkeep
 data/
 *.mp4
 *.mov
 *.parquet
+
+# Pesos de modelos (descarregados automaticamente pelo ultralytics)
+*.pt
+yolo*.pt
 
 # OS
 .DS_Store
