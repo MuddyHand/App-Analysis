@@ -6,7 +6,25 @@ tracking (Fase 1). Não se avança sem essa decisão confirmada.
 
 ## Estado
 
-🔵 Scripts de teste criados. A aguardar input para os correr.
+✅ **Fechada.** Decisão: seguir com o caminho B (export manual mp4) para
+desbloquear a Fase 1. Caminho A (API) fica em aberto para integrar mais
+tarde, se/quando houver credenciais — sem bloquear o progresso entretanto.
+
+## Validação feita
+
+- Testado com um excerto real exportado da Veo (`Amora vs Clube de Futebol
+  Os Belenenses`, 1280x720, ~30fps). Ficheiro abre corretamente, qualidade
+  suficiente para tracking.
+- **Achado importante:** a Veo tem dois modos de exportação —
+  **Broadcast/Follow-cam** (zoom/pan automático a seguir a bola — a baliza
+  oposta pode sair de vista) e **Tactical/Panoramic view** (plano fixo,
+  campo inteiro sempre visível, sem zoom automático). A câmara grava sempre
+  o campo completo (lentes wide-angle); o follow-cam é só uma vista gerada
+  a partir dessa gravação.
+  **Para a Fase 1, o export tem de ser sempre em modo Tactical/Panoramic** —
+  é isso que sustenta a premissa de "uma calibração manual dos pontos de
+  referência por frame fixa por jogo". Em modo Broadcast essa premissa
+  não se aplica (o enquadramento muda dentro do próprio jogo).
 
 ## O que preciso de ti para correr isto
 
@@ -43,11 +61,12 @@ python fase0_api/test_manual_export.py caminho/para/o/video.mp4
 Isto só confirma que o ficheiro abre e imprime metadados (resolução, fps,
 duração) — não faz deteção nem tracking.
 
-## Decisão a tomar no fim desta fase
+## Caminho A (API) — em aberto, não bloqueia
 
-- Se a API der acesso a eventos já etiquetados (mesmo que poucos) que
-  reduzam trabalho manual → caminho A, complementado com B onde faltar.
-- Se a API não der nada de útil (ou acesso for negado/pago) → caminho B
-  como único caminho.
-
-**Não avanço para a Fase 1 (tracking) sem confirmares esta decisão.**
+Continua sem credenciais. Quando (e se) chegarem, corre:
+```bash
+python fase0_api/test_veo_api_access.py
+```
+e integramos o que fizer sentido (ex.: eventos já etiquetados) como
+complemento ao pipeline de vídeo — nunca como substituto, já que a Fase 1
+já está a avançar com o caminho B.
