@@ -1,0 +1,22 @@
+# Ambiente
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Credenciais — NUNCA commitar
+.env
+credentials.json
+service_account.json
+*.token
+
+# Dados e vídeo (pesados / sensíveis — não versionar)
+fase0_api/output/*
+!fase0_api/output/.gitkeep
+data/
+*.mp4
+*.mov
+*.parquet
+
+# OS
+.DS_Store

@@ -1,0 +1,7 @@
+# Fase 0 — validação de acesso a dados
+requests>=2.31
+python-dotenv>=1.0
+opencv-python>=4.9
+
+# Fases seguintes (tracking, etiquetagem, relatório) serão adicionadas
+# a este ficheiro à medida que cada fase for confirmada e implementada.
