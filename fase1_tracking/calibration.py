@@ -12,6 +12,20 @@ Broadcast vs. Tactical da Veo). Não faz homografia automática — a
 deteção de *quando* recalibrar é so uma sugestão heurística
 (ver recalibration_candidates.py); a calibração em si é sempre manual.
 
+Dois métodos de projeção pixel -> metros:
+  - "homography" (4-5 pontos): exata para câmara sem distorção de lente
+    (export nativo da Veo, ex.: clips de meio-campo). É o método por
+    omissão.
+  - "poly2" (>= 6 pontos, ou forçar com --projection poly2): ajuste
+    polinomial que absorve alguma distorção de lente (ex.: gravação de
+    ecrã do modo Panorâmico da Veo, que é wide-angle/fisheye). Clica
+    mais pontos espalhados pelo frame para melhor precisão.
+
+Para vídeos que são só uma PARTE do jogo (ex.: clips de 15min de meio-
+campo), usa --time-offset para dizeres em que minuto do jogo este vídeo
+começa — assim os timestamps guardados ficam em tempo absoluto de jogo,
+e dá para juntar várias calibrações/tracking com merge_clips.py depois.
+
 Uso:
     python fase1_tracking/calibration.py video.mp4 \
         --timestamp 0 \
@@ -22,10 +36,15 @@ Uso:
         --timestamp 750 \
         --out fase1_tracking/calibration/jogo1.json   # acrescenta novo keyframe
 
+    # Um clip que começa aos 30min do jogo real:
+    python fase1_tracking/calibration.py clip_meio_campo_esquerdo_parte2.mp4 \
+        --timestamp 0 --time-offset 1800 \
+        --out fase1_tracking/calibration/jogo1_esquerdo_parte2.json
+
 Controlos na janela:
     clique esquerdo  -> marca um ponto (depois escreve o nome no terminal)
     u                -> desfaz o último ponto
-    s                -> guarda este keyframe (precisa de >= 4 pontos)
+    s                -> guarda este keyframe (mínimo depende do método)
     q / ESC           -> sai sem guardar
 """
 
@@ -39,7 +58,7 @@ from pathlib import Path
 import cv2
 
 from pitch_reference import PitchDimensions, named_reference_points
-from homography import compute_homography
+from homography import compute_homography, PolynomialWarp, InsufficientPointsError
 
 
 def load_frame_at(video_path: str, timestamp_s: float):
@@ -67,7 +86,14 @@ def pick_reference_name(reference_names: list[str], point_index: int) -> str:
     return choice or f"ponto_{point_index}"
 
 
-def run_calibration(video_path: str, timestamp_s: float, out_path: str, dims: PitchDimensions) -> None:
+def run_calibration(
+    video_path: str,
+    timestamp_s: float,
+    out_path: str,
+    dims: PitchDimensions,
+    time_offset_s: float = 0.0,
+    projection: str = "auto",
+) -> None:
     frame, frame_number = load_frame_at(video_path, timestamp_s)
     ref_points = named_reference_points(dims)
     ref_names = list(ref_points.keys())
@@ -103,8 +129,10 @@ def run_calibration(video_path: str, timestamp_s: float, out_path: str, dims: Pi
             removed = clicked.pop()
             print(f"  - removido {removed['name']}")
         elif key == ord("s"):
-            if len(clicked) < 4:
-                print(f"Precisas de pelo menos 4 pontos (tens {len(clicked)}).")
+            min_points = PolynomialWarp.MIN_POINTS if projection == "poly2" else 4
+            if len(clicked) < min_points:
+                print(f"Precisas de pelo menos {min_points} pontos para o método "
+                      f"'{projection}' (tens {len(clicked)}).")
                 continue
             break
         elif key in (ord("q"), 27):
@@ -114,15 +142,34 @@ def run_calibration(video_path: str, timestamp_s: float, out_path: str, dims: Pi
 
     cv2.destroyAllWindows()
 
-    # Valida já a homografia antes de guardar (falha cedo se os pontos forem maus).
     image_points = [tuple(p["image_xy"]) for p in clicked]
     pitch_points = [tuple(p["pitch_xy"]) for p in clicked]
-    compute_homography(image_points, pitch_points)  # levanta erro se degenerado
+
+    method = projection
+    if method == "auto":
+        method = "poly2" if len(clicked) >= PolynomialWarp.MIN_POINTS else "homography"
+
+    # Valida já a projeção antes de guardar (falha cedo se os pontos forem maus).
+    keyframe_extra = {}
+    if method == "poly2":
+        try:
+            warp = PolynomialWarp.fit(image_points, pitch_points)
+        except InsufficientPointsError as exc:
+            raise SystemExit(str(exc))
+        keyframe_extra["polynomial"] = warp.to_json()
+    else:
+        compute_homography(image_points, pitch_points)  # levanta erro se degenerado
 
     out_file = Path(out_path)
-    data = {"video_path": video_path, "pitch_dimensions": dims.__dict__, "keyframes": []}
+    data = {
+        "video_path": video_path,
+        "pitch_dimensions": dims.__dict__,
+        "clip_time_offset_s": time_offset_s,
+        "keyframes": [],
+    }
     if out_file.exists():
         data = json.loads(out_file.read_text())
+        data.setdefault("clip_time_offset_s", time_offset_s)
 
     keyframe_id = len(data["keyframes"])
     # fecha a validade do keyframe anterior no momento deste novo
@@ -135,12 +182,14 @@ def run_calibration(video_path: str, timestamp_s: float, out_path: str, dims: Pi
         "timestamp_s": timestamp_s,
         "valid_from_s": timestamp_s,
         "valid_to_s": None,
+        "method": method,
         "points": clicked,
+        **keyframe_extra,
     })
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    print(f"\nKeyframe #{keyframe_id} guardado em {out_file}")
+    print(f"\nKeyframe #{keyframe_id} ({method}) guardado em {out_file}")
 
 
 if __name__ == "__main__":
@@ -150,7 +199,13 @@ if __name__ == "__main__":
     parser.add_argument("--out", required=True, help="ficheiro JSON de calibração do jogo")
     parser.add_argument("--pitch-length", type=float, default=105.0)
     parser.add_argument("--pitch-width", type=float, default=68.0)
+    parser.add_argument("--time-offset", type=float, default=0.0,
+                         help="segundos de jogo em que este VÍDEO começa (para clips parciais)")
+    parser.add_argument("--projection", choices=["auto", "homography", "poly2"], default="auto",
+                         help="auto = homography com <6 pontos, poly2 com >=6 (recomendado para "
+                              "fontes com distorção de lente, ex. gravação do modo Panorâmico)")
     args = parser.parse_args()
 
     dims = PitchDimensions(length_m=args.pitch_length, width_m=args.pitch_width)
-    run_calibration(args.video_path, args.timestamp, args.out, dims)
+    run_calibration(args.video_path, args.timestamp, args.out, dims,
+                     time_offset_s=args.time_offset, projection=args.projection)

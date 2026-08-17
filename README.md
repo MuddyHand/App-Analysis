@@ -43,11 +43,20 @@ cp .env.example .env   # preencher com credenciais reais — nunca commitar .env
 
 ## Próximo passo
 
-Já temos o jogo completo (via GitHub Release) e a Fase 1 (tracking) tem
-uma v1 implementada. Limitações conhecidas, testadas com dados reais (ver
-`fase1_tracking/README.md`): deteção de bola fraca, IDs de tracking
-instáveis, e a deteção automática de mudanças de enquadramento da câmara
-não é fiável (3 heurísticas tentadas, nenhuma funcionou — recomenda-se
-inspeção visual manual). Falta calibrar o jogo (só pode ser feito
-localmente, com ecrã) e correr o tracking sobre o jogo completo antes de
-avançar para a Fase 2.
+O primeiro jogo completo recebido (via GitHub Release) tem câmara
+instável (reenquadra a cada poucos minutos) — não é utilizável como está
+para o pipeline de tracking. A Veo não permite exportar a câmara
+Panorâmica diretamente, por isso identificámos dois caminhos
+alternativos (ver `fase1_tracking/README.md` para detalhe):
+
+- **A — Panorâmico + gravação de ecrã**: câmara genuinamente fixa, mas
+  com distorção de lente (agora suportada via novo método de projeção
+  `poly2`) e interface do browser a recortar (`prepare_screen_recording.py`).
+- **B — Clips por meio-campo**: export nativo sem distorção, mas só
+  meio campo de cada vez e limite de 15min por clip (~12 clips por
+  jogo) — precisa de juntar tudo com `merge_clips.py`.
+
+Ambos testados estruturalmente com exemplos curtos enviados; falta
+validar com um jogo completo de qualquer um dos dois antes de avançar
+para a Fase 2. Limitação transversal já confirmada nos três vídeos
+testados até agora: a deteção da bola falha com o modelo YOLO genérico.

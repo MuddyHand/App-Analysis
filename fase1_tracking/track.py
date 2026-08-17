@@ -15,6 +15,13 @@ LIMITAÇÕES A CONHECER (honestidade técnica, não escondas isto):
 - A projeção para metros só é válida dentro da janela [valid_from_s,
   valid_to_s] de cada keyframe de calibração. Frames fora de todas as
   janelas calibradas ficam sem coordenadas de campo (x_m/y_m = None).
+- Se a calibração usar método "poly2" (fontes com distorção de lente,
+  ex. gravação do modo Panorâmico), a projeção é um ajuste empírico, não
+  uma homografia exata — fiável dentro da zona coberta pelos pontos
+  clicados, não garantida fora dela.
+- timestamp_s no output é tempo ABSOLUTO de jogo (soma o
+  clip_time_offset_s da calibração), para clips parciais (ex.: meio-
+  campo) poderem ser combinados depois com merge_clips.py.
 
 Uso:
     python fase1_tracking/track.py video.mp4 \
@@ -32,7 +39,7 @@ import cv2
 import pandas as pd
 from ultralytics import YOLO
 
-from homography import compute_homography, apply_homography, is_within_pitch
+from homography import compute_homography, apply_homography, is_within_pitch, PolynomialWarp
 
 COCO_PERSON = 0
 COCO_SPORTS_BALL = 32
@@ -41,18 +48,29 @@ COCO_SPORTS_BALL = 32
 def load_calibration(path: str):
     data = json.loads(Path(path).read_text())
     dims = data["pitch_dimensions"]
+    time_offset_s = data.get("clip_time_offset_s", 0.0)
     keyframes = []
     for kf in data["keyframes"]:
         image_points = [tuple(p["image_xy"]) for p in kf["points"]]
         pitch_points = [tuple(p["pitch_xy"]) for p in kf["points"]]
-        H = compute_homography(image_points, pitch_points)
+        method = kf.get("method", "homography")
+
+        if method == "poly2":
+            warp = PolynomialWarp.from_json(kf["polynomial"]) if "polynomial" in kf \
+                else PolynomialWarp.fit(image_points, pitch_points)
+            project = warp.apply
+        else:
+            H = compute_homography(image_points, pitch_points)
+            project = lambda x, y, H=H: apply_homography(H, x, y)
+
         keyframes.append({
             "id": kf["id"],
             "valid_from_s": kf["valid_from_s"],
             "valid_to_s": kf["valid_to_s"],
-            "H": H,
+            "project": project,
+            "method": method,
         })
-    return dims, keyframes
+    return dims, keyframes, time_offset_s
 
 
 def active_keyframe(keyframes: list[dict], t: float):
@@ -70,7 +88,7 @@ def _video_fps(video_path: str) -> float:
 
 
 def run_tracking(video_path: str, calibration_path: str, out_path: str, model_name: str) -> None:
-    dims, keyframes = load_calibration(calibration_path)
+    dims, keyframes, time_offset_s = load_calibration(calibration_path)
     model = YOLO(model_name)
     fps = _video_fps(video_path)
 
@@ -102,13 +120,13 @@ def run_tracking(video_path: str, calibration_path: str, out_path: str, model_na
                 within_pitch = None
                 calibration_id = None
                 if kf is not None:
-                    x_m, y_m = apply_homography(kf["H"], x_px, y_px)
+                    x_m, y_m = kf["project"](x_px, y_px)
                     within_pitch = is_within_pitch(x_m, y_m, dims["length_m"], dims["width_m"])
                     calibration_id = kf["id"]
 
                 rows.append({
                     "frame": frame_idx,
-                    "timestamp_s": round(t, 3),
+                    "timestamp_s": round(t + time_offset_s, 3),
                     "track_id": int(track_id),
                     "class": "player_or_person" if int(cls) == COCO_PERSON else "ball",
                     "x_px": x_px,
