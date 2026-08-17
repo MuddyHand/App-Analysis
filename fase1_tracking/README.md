@@ -29,11 +29,13 @@ pedido).
    Podes correr isto várias vezes no mesmo jogo, em timestamps diferentes,
    para acrescentar keyframes adicionais.
 
-2. **`recalibration_candidates.py`** — heurística (fluxo ótico) que
-   percorre o vídeo e sinaliza momentos onde o enquadramento pode ter
-   mudado, com um score de confiança. **Não é uma deteção fiável** — serve
-   só para não teres de vasculhar o jogo todo manualmente à procura de
-   onde recalibrar. Confirma sempre visualmente antes de agir.
+2. **`recalibration_candidates.py`** — ⚠️ **experimental, não confiável**
+   (ver secção "Jogo completo" abaixo). Tentativa de heurística
+   automática para sinalizar mudanças de enquadramento — três abordagens
+   diferentes testadas com o jogo real, nenhuma deu um sinal em que se
+   possa confiar. **Recomendação atual: inspeção visual manual espaçada**
+   (abrir o vídeo a cada 5-10min e ver se o enquadramento mudou), não
+   este script.
 
 3. **`track.py`** — corre YOLO + ByteTrack (via `ultralytics`) sobre o
    vídeo, e para cada deteção usa o keyframe de calibração ativo nesse
@@ -68,6 +70,39 @@ Nenhuma destas limitações bloqueia a fase — só significa que os dados
 desta fase são um ponto de partida para heurísticas (Fase 2), não um
 tracking "pronto a usar" sem revisão.
 
+## Validação com jogo completo real
+
+Recebemos o jogo completo (`Amora vs Clube de Futebol Os Belenenses`) via
+GitHub Release — 1.94GB, 1280x720, 30fps, 166min de ficheiro. Achados:
+
+- **Conteúdo real só até ~127min** — dos 128min aos 166min é frame preto
+  (brilho médio ~0), gravação morta depois do jogo. Ao processar este
+  jogo, cortar ali para não desperdiçar tempo de cálculo.
+- **Tentei 3 heurísticas automáticas diferentes para detetar mudanças de
+  enquadramento da câmara, nenhuma funcionou de forma fiável:**
+  1. Fluxo ótico médio sobre o frame inteiro → sinalizou 58% do vídeo
+     (inútil — o movimento normal dos jogadores já basta para disparar).
+  2. Correlação de uma faixa de fundo do frame → devia ficar estável em
+     períodos parados, mas caiu para 0.1-0.4 mesmo com só 1 minuto de
+     diferença e câmara aparentemente fixa — há um **painel publicitário
+     LED com conteúdo a mudar** que contamina a medição.
+  3. Feature matching (ORB) + homografia entre frames → deslocamentos
+     estimados sem sentido físico, por causa de texturas repetitivas
+     (relva, bancada, folhagem) a confundir o matching.
+
+  Isto não foi falta de afinar um parâmetro — é um problema de visão
+  computacional genuinamente difícil com este tipo de fundo. Decisão:
+  não insistir mais nisto por agora. `recalibration_candidates.py` fica
+  no repositório marcado como experimental/não confiável, caso valha a
+  pena retomar mais tarde (ex.: mascarar a zona do painel LED, ou usar
+  deteção de linhas do campo em vez de features genéricas).
+- Inspeção visual manual (frames a cada 5min ao longo do jogo todo)
+  mostra o enquadramento a variar em vários pontos, mas sem um padrão
+  fácil de automatizar com o tempo disponível — fica confirmado que o
+  design de "múltiplos keyframes de calibração por jogo" é mesmo
+  necessário, e que a forma prática de decidir onde os colocar é
+  inspeção manual espaçada, não deteção automática.
+
 ## Como usar (num jogo real)
 
 ```bash
@@ -75,11 +110,11 @@ tracking "pronto a usar" sem revisão.
 python fase1_tracking/calibration.py video.mp4 --timestamp 0 \
     --out fase1_tracking/calibration/jogo1.json
 
-# 2. (opcional) ver onde pode ser preciso recalibrar:
-python fase1_tracking/recalibration_candidates.py video.mp4 \
-    --out fase1_tracking/calibration/jogo1_candidatos.csv
-# confirma visualmente cada candidato e, se necessário, repete o passo 1
-# nesse timestamp (acrescenta um novo keyframe ao mesmo JSON)
+# 2. Vê o vídeo a saltar de 5 em 5 minutos e anota os timestamps onde o
+#    enquadramento muda visivelmente (recalibration_candidates.py é
+#    experimental e não fiável — não uses os resultados dele para isto).
+#    Para cada timestamp identificado, repete o passo 1 nesse ponto
+#    (acrescenta um novo keyframe ao mesmo JSON).
 
 # 3. Correr o tracking:
 python fase1_tracking/track.py video.mp4 \
@@ -89,7 +124,8 @@ python fase1_tracking/track.py video.mp4 \
 
 ## Próximo passo
 
-Preciso de um vídeo mais longo (idealmente um jogo completo, ou pelo menos
-vários minutos com jogadas variadas) para calibrar de verdade e avaliar a
-qualidade do tracking antes de avançar para a Fase 2 (heurísticas de
-eventos). Sem isso, não há como validar se o pipeline serve o propósito.
+Já temos o jogo completo. Falta:
+1. Calibrar de verdade (clicagem manual dos pontos de referência, com
+   ecrã — não pode ser feito neste sandbox remoto).
+2. Correr `track.py` sobre o jogo completo (ou um excerto representativo)
+   e avaliar a qualidade real do tracking antes de avançar para a Fase 2.

@@ -1,16 +1,36 @@
 """
-Heurística para sinalizar candidatos a "o enquadramento da câmara pode
-ter mudado aqui" — NÃO é deteção automática fiável, é só um filtro para
-reduzires o trabalho de vasculhar o jogo todo à procura de onde
-recalibrar manualmente (ver calibration.py).
+⚠️ EXPERIMENTAL — NÃO CONFIÁVEL. Ver "histórico honesto" abaixo antes de
+usar. Recomendação atual (ver fase1_tracking/README.md): faz antes uma
+inspeção visual manual espaçada (ex.: um frame a cada 5min) para decidir
+onde recalibrar — é mais lento, mas dá-te um resultado em que podes
+confiar, o que este script ainda não consegue.
 
-Método: mede o deslocamento médio de fluxo ótico denso entre frames
-amostradas. Um pan/zoom sustentado da câmara produz um fluxo médio alto
-e consistente numa direção; ruído normal de jogo (jogadores a mexer-se)
-tende a ser mais disperso/cancela-se. Isto é uma aproximação — pode
-gerar falsos positivos (ex.: câmara genuinamente fixa mas com jogadores
-a correr em massa numa direção) e falsos negativos (pans lentos e
-graduais). Cada candidato tem um score, não um veredicto.
+Objetivo original: sinalizar candidatos a "o enquadramento da câmara
+pode ter mudado aqui", para reduzir o trabalho de vasculhar o jogo todo
+à procura de onde recalibrar manualmente (ver calibration.py).
+
+HISTÓRICO HONESTO — três tentativas, testadas com um jogo real de
+166min, nenhuma deu um sinal fiável:
+
+1. Fluxo ótico médio sobre o frame inteiro: sinalizou 58% do vídeo como
+   candidato — o movimento normal dos jogadores já produz fluxo médio
+   tão alto quanto uma mudança de câmara real.
+2. Correlação de uma faixa superior do frame (fundo: bancada, árvores,
+   painéis): devia ficar perto de 1.0 em períodos estáveis, mas caiu
+   para 0.1-0.4 mesmo entre frames com 1 minuto de diferença e câmara
+   aparentemente parada — há um painel publicitário LED com conteúdo a
+   mudar dentro dessa faixa, o que contamina a métrica.
+3. Feature matching (ORB) + homografia entre frames: os deslocamentos
+   estimados não fazem sentido físico (centenas de pixels entre frames
+   visualmente semelhantes) — o relvado, a bancada e a folhagem têm
+   textura repetitiva que confunde o matching.
+
+Isto fica no repositório como código funcional (a versão 2, por
+correlação, é a que está ativa abaixo) mas **não uses os resultados como
+verdade** — são só um ponto de partida especulativo, se quiseres
+continuar a afinar isto no futuro. Não foi um ajuste rápido de parâmetro
+que faltou — é um problema de visão computacional genuinamente difícil
+dado o painel LED, variações de luz/exposição, e texturas repetitivas.
 
 Uso:
     python fase1_tracking/recalibration_candidates.py video.mp4 \
@@ -30,11 +50,35 @@ import cv2
 import numpy as np
 
 
-def scan_video(video_path: str, sample_every_s: float, motion_threshold: float, progress_every: int = 100):
+def _background_strip(frame, strip_fraction: float = 0.3):
+    """Recorta a faixa superior do frame (tipicamente fundo estático:
+    bancada, árvores, painéis — não o relvado onde os jogadores correm)."""
+    small = cv2.resize(frame, (320, 180))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    strip_h = int(gray.shape[0] * strip_fraction)
+    return gray[:strip_h, :]
+
+
+def _correlation(a: np.ndarray, b: np.ndarray) -> float:
+    a = a.flatten().astype(np.float64)
+    b = b.flatten().astype(np.float64)
+    a -= a.mean()
+    b -= b.mean()
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    if denom < 1e-6:
+        return 1.0
+    return float(np.dot(a, b) / denom)
+
+
+def scan_video(video_path: str, sample_every_s: float, correlation_threshold: float, progress_every: int = 100):
     """Amostra o vídeo por SEEK direto (cap.set POS_FRAMES) em vez de
     descodificar sequencialmente frame a frame — para vídeos longos (jogo
     completo, horas de duração) isto é ordens de magnitude mais rápido do
-    que ler frame a frame só para descartar a maioria."""
+    que ler frame a frame só para descartar a maioria.
+
+    Sinaliza um candidato quando a correlação da faixa de fundo cai abaixo
+    de `correlation_threshold` face à amostra anterior (1.0 = fundo
+    idêntico, valores mais baixos = fundo mudou -> câmara mexeu-se)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise SystemExit(f"Não foi possível abrir o vídeo: {video_path}")
@@ -45,7 +89,7 @@ def scan_video(video_path: str, sample_every_s: float, motion_threshold: float, 
     sample_frame_numbers = list(range(0, total_frames, frame_step))
 
     candidates = []
-    prev_gray = None
+    prev_strip = None
 
     for i, frame_idx in enumerate(sample_frame_numbers):
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -53,27 +97,21 @@ def scan_video(video_path: str, sample_every_s: float, motion_threshold: float, 
         if not ok:
             continue
 
-        small = cv2.resize(frame, (160, 90))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        strip = _background_strip(frame)
         t = frame_idx / fps
 
-        if prev_gray is not None:
-            flow = cv2.calcOpticalFlowFarneback(
-                prev_gray, gray, None, 0.5, 2, 15, 3, 5, 1.2, 0
-            )
-            mean_dx = float(np.mean(flow[..., 0]))
-            mean_dy = float(np.mean(flow[..., 1]))
-            magnitude = float(np.hypot(mean_dx, mean_dy))
+        if prev_strip is not None:
+            corr = _correlation(prev_strip, strip)
 
-            if magnitude >= motion_threshold:
+            if corr < correlation_threshold:
                 candidates.append({
                     "timestamp_s": round(t, 2),
                     "frame_number": frame_idx,
-                    "mean_flow_magnitude": round(magnitude, 3),
-                    "confidence": "baixa" if magnitude < motion_threshold * 1.5 else "média",
+                    "background_correlation": round(corr, 3),
+                    "confidence": "baixa" if corr > correlation_threshold * 0.85 else "média",
                 })
 
-        prev_gray = gray
+        prev_strip = strip
 
         if progress_every and i % progress_every == 0:
             print(f"  ... {i}/{len(sample_frame_numbers)} amostras (t={t/60:.1f}min)", flush=True)
@@ -92,7 +130,7 @@ def merge_consecutive(candidates: list[dict], gap_s: float = 2.0) -> list[dict]:
         last = merged[-1]
         if c["timestamp_s"] - last["end_s"] <= gap_s:
             last["end_s"] = c["timestamp_s"]
-            last["mean_flow_magnitude"] = max(last["mean_flow_magnitude"], c["mean_flow_magnitude"])
+            last["background_correlation"] = min(last["background_correlation"], c["background_correlation"])
         else:
             merged.append(dict(c, start_s=c["timestamp_s"], end_s=c["timestamp_s"]))
     return merged
@@ -102,7 +140,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video_path")
     parser.add_argument("--sample-every", type=float, default=1.0, help="segundos entre amostras")
-    parser.add_argument("--threshold", type=float, default=0.8, help="magnitude mínima de fluxo para sinalizar")
+    parser.add_argument("--threshold", type=float, default=0.9,
+                         help="correlação mínima do fundo entre amostras (1.0=idêntico); abaixo disto é sinalizado")
     parser.add_argument("--out", required=True, help="CSV de saída")
     args = parser.parse_args()
 
@@ -112,7 +151,7 @@ if __name__ == "__main__":
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["start_s", "end_s", "mean_flow_magnitude", "confidence"])
+        writer = csv.DictWriter(f, fieldnames=["start_s", "end_s", "background_correlation", "confidence"])
         writer.writeheader()
         for row in merged:
             writer.writerow({k: row[k] for k in writer.fieldnames})

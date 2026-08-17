@@ -43,7 +43,11 @@ cp .env.example .env   # preencher com credenciais reais — nunca commitar .env
 
 ## Próximo passo
 
-Fase 1 (tracking) tem uma v1 implementada e testada estruturalmente, mas
-por validar com um jogo real (ver `fase1_tracking/README.md` — limitações
-conhecidas: deteção de bola fraca, IDs de tracking instáveis). Falta um
-vídeo mais longo para calibrar e avaliar antes de avançar para a Fase 2.
+Já temos o jogo completo (via GitHub Release) e a Fase 1 (tracking) tem
+uma v1 implementada. Limitações conhecidas, testadas com dados reais (ver
+`fase1_tracking/README.md`): deteção de bola fraca, IDs de tracking
+instáveis, e a deteção automática de mudanças de enquadramento da câmara
+não é fiável (3 heurísticas tentadas, nenhuma funcionou — recomenda-se
+inspeção visual manual). Falta calibrar o jogo (só pode ser feito
+localmente, com ecrã) e correr o tracking sobre o jogo completo antes de
+avançar para a Fase 2.
