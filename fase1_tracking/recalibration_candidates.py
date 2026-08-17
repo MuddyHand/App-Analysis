@@ -30,47 +30,53 @@ import cv2
 import numpy as np
 
 
-def scan_video(video_path: str, sample_every_s: float, motion_threshold: float):
+def scan_video(video_path: str, sample_every_s: float, motion_threshold: float, progress_every: int = 100):
+    """Amostra o vídeo por SEEK direto (cap.set POS_FRAMES) em vez de
+    descodificar sequencialmente frame a frame — para vídeos longos (jogo
+    completo, horas de duração) isto é ordens de magnitude mais rápido do
+    que ler frame a frame só para descartar a maioria."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise SystemExit(f"Não foi possível abrir o vídeo: {video_path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_step = max(1, int(round(fps * sample_every_s)))
+    sample_frame_numbers = list(range(0, total_frames, frame_step))
 
     candidates = []
     prev_gray = None
-    prev_t = None
-    frame_idx = 0
 
-    while True:
+    for i, frame_idx in enumerate(sample_frame_numbers):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ok, frame = cap.read()
         if not ok:
-            break
-        if frame_idx % frame_step == 0:
-            small = cv2.resize(frame, (160, 90))
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            t = frame_idx / fps
+            continue
 
-            if prev_gray is not None:
-                flow = cv2.calcOpticalFlowFarneback(
-                    prev_gray, gray, None, 0.5, 2, 15, 3, 5, 1.2, 0
-                )
-                mean_dx = float(np.mean(flow[..., 0]))
-                mean_dy = float(np.mean(flow[..., 1]))
-                magnitude = float(np.hypot(mean_dx, mean_dy))
+        small = cv2.resize(frame, (160, 90))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        t = frame_idx / fps
 
-                if magnitude >= motion_threshold:
-                    candidates.append({
-                        "timestamp_s": round(t, 2),
-                        "frame_number": frame_idx,
-                        "mean_flow_magnitude": round(magnitude, 3),
-                        "confidence": "baixa" if magnitude < motion_threshold * 1.5 else "média",
-                    })
+        if prev_gray is not None:
+            flow = cv2.calcOpticalFlowFarneback(
+                prev_gray, gray, None, 0.5, 2, 15, 3, 5, 1.2, 0
+            )
+            mean_dx = float(np.mean(flow[..., 0]))
+            mean_dy = float(np.mean(flow[..., 1]))
+            magnitude = float(np.hypot(mean_dx, mean_dy))
 
-            prev_gray = gray
-            prev_t = t
-        frame_idx += 1
+            if magnitude >= motion_threshold:
+                candidates.append({
+                    "timestamp_s": round(t, 2),
+                    "frame_number": frame_idx,
+                    "mean_flow_magnitude": round(magnitude, 3),
+                    "confidence": "baixa" if magnitude < motion_threshold * 1.5 else "média",
+                })
+
+        prev_gray = gray
+
+        if progress_every and i % progress_every == 0:
+            print(f"  ... {i}/{len(sample_frame_numbers)} amostras (t={t/60:.1f}min)", flush=True)
 
     cap.release()
     return candidates
